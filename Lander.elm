@@ -14,13 +14,69 @@ import Generic (..)
 
 -- Model
 
-type Body = Ship {x:Float,y:Float,vx:Float,vy:Float,heading:Float,m:Float} | Planet {x:Float,y:Float,vx:Float,vy:Float,r:Float,m:Float}
+-- better use elm-linear-algebra at a later stage
+type alias Vector = { x : Float, y : Float }
+
+type alias Shippy = { heading : Float }
+
+type alias Planety = { radius : Float }
+
+
+mapVector : (Float -> Float) -> Vector -> Vector
+mapVector f { x, y } =
+    { x = f x
+    , y = f y
+    }
+
+mapVector2 : (Float -> Float -> Float) -> Vector -> Vector -> Vector
+mapVector2 f a b =
+    { x = f a.x b.x
+    , y = f a.y b.y
+    }
+
+xy : Float -> Vector
+xy s =
+    { x = s
+    , y = s
+    }
+
+lenVector : Vector -> Float
+lenVector { x, y } =
+    sqrt (x^2 + y^2)
+
+addVector = mapVector2 (+)
+subVector = mapVector2 (-)
+mulVector = mapVector2 (*)
+divVector = mapVector2 (/)
+
+type BodyKind 
+    = Ship { heading : Float }
+    | Planet { radius : Float }
+
+type alias Body = 
+    { position : Vector
+    , velocity : Vector
+    , mass : Float
+    , kind : BodyKind
+    }
 
 start viewport = case viewport of
     Viewport (w,h) -> {
         view = {w = w, h = h},
-        ship = Ship {x = 0, y = 0, vx =0, vy = 0.07, heading=0, m=0.001},
-        planet = Planet {x = -150, y = 0, vx =0, vy = 0, r = 70, m=1}
+        bodies = 
+            [ { kind = Ship { heading = 0 }
+              , position = { x = 0, y = 0 }
+              , velocity = { x = 0, y = 0.07 }
+              , mass = 0.001
+              }
+
+            , { kind = Planet { radius = 70 }
+              , position = { x = -150, y = 0 }
+              , velocity = { x = 0, y = 0 }
+              , mass = 1
+              }
+
+            ]
     }
 
 -- Update
@@ -37,45 +93,69 @@ updateViewport (w,h) world =
         v' = { wv | w <- 0, h <- 0}
     in {world | view <- v'}
 
-integrate dt object1 object2 =
-    let xx = (object1.x-object2.x)
-        yy = (object1.y-object2.y)
-        d2 = xx^2 + yy^2
-        ax = object1.m * xx / (sqrt(d2) * d2)
-        ay = object1.m * yy / (sqrt(d2) * d2)
-    in { object2 |
-            x <- object2.x + dt * object2.vx + (ax * dt*dt),
-            y <- object2.y + dt * object2.vy + (ay * dt*dt),
-            vx <- object2.vx + dt * ax,
-            vy <- object2.vy + dt * ay
-        }
+attraction : Body -> Body -> Vector 
+attraction to from = -- the attraction vector points from `to` to `from`, because `from` is where the attraction comes from
+    let diff = from.position `subVector` to.position
+        distance = lenVector diff
+        dir = diff `divVector` xy distance -- normalization step
+    in xy (from.mass/distance^2) `mulVector` dir
+
 
 updateTick dt world =
-    let (Ship s) = world.ship
-        (Planet p) = world.planet
-    in { world | ship <- Ship (integrate dt p s), planet <- Planet (integrate dt s p)}
+    let accumulatedAcceleration body = 
+            world.bodies 
+            |> filter ((/=) body) 
+            |> map (attraction body) -- attractive forces on `body`
+            |> foldl addVector (xy 0) -- basically `sum` on `Vector`
+        updateMovement body =
+            case body.kind of -- we only want to update ships
+                Ship _ ->
+                    let velocity = 
+                            accumulatedAcceleration body
+                            |> mulVector (xy dt) -- integrate accelerating force over time => velocity
+                            |> addVector body.velocity
+                        position =
+                            velocity
+                            |> mulVector (xy dt) -- integrate velocity over time => position
+                            |> addVector body.position
+                    in { body | velocity <- velocity, position <- position }
+                _ -> body
+    in { world | bodies <- map updateMovement world.bodies }
+
+isShip : Body -> Bool
+isShip body =
+    case body.kind of
+        Ship _ -> True
+        _ -> False
 
 updateMove arrows world = 
-    let (Ship s) = world.ship
-        s' = {s | heading <- s.heading-(toFloat arrows.x)*5,
-                  vx <- s.vx - (toFloat arrows.y) * sin (degrees s.heading) * 0.001,
-                  vy <- s.vy + (toFloat arrows.y) * cos (degrees s.heading) * 0.001}
-    in {world | ship <- Ship s'}
+    let updateBody body =
+            case body.kind of
+                Ship {heading} -> 
+                    { body 
+                    | kind <- Ship { heading = heading - toFloat arrows.x * 5 }
+                    , velocity <-
+                        { x = body.velocity.x - (toFloat arrows.y) * sin (degrees heading) * 0.001
+                        , y = body.velocity.y + (toFloat arrows.y) * cos (degrees heading) * 0.001
+                        }
+                    }
+                _ -> body
+    in { world | bodies <- map updateBody world.bodies }
 
 -- Display
 
 displayBody body =
-    case body of
-        Ship s -> Debug.trace "ship" <| move (s.x, s.y)
-            <| rotate (degrees s.heading)
+    case body.kind of
+        Ship {heading} -> Debug.trace "ship" <| move (body.position.x, body.position.y)
+            <| rotate (degrees heading)
             <| group [  rotate (degrees -30) (outlined (solid white) (ngon 3 25)),
                         outlined (solid white) (rect 3 25)]
-        Planet p -> move (p.x, p.y) <| outlined (solid white) (circle p.r)
+        Planet {radius} -> move (body.position.x, body.position.y) <| outlined (solid white) (circle radius)
 
 display world =
     let (w',h') = (toFloat world.view.w, toFloat world.view.h)
     in collage world.view.w world.view.h <|
-            append [filled black (rect w' h')] (map displayBody [world.ship,world.planet])
+            append [filled black (rect w' h')] (map displayBody world.bodies)
 
 -- Signals
 
