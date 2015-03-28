@@ -17,17 +17,6 @@ import Generic (..)
 -- better use elm-linear-algebra at a later stage
 type alias Vector = { x : Float, y : Float }
 
-type alias Shippy = { heading : Float }
-
-type alias Planety = { radius : Float }
-
-
-mapVector : (Float -> Float) -> Vector -> Vector
-mapVector f { x, y } =
-    { x = f x
-    , y = f y
-    }
-
 mapVector2 : (Float -> Float -> Float) -> Vector -> Vector -> Vector
 mapVector2 f a b =
     { x = f a.x b.x
